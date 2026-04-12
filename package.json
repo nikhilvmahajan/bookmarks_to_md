@@ -1,0 +1,11 @@
+{
+  "name": "bookmarks_to_md",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "bookmarks_to_md": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js"
+  }
+}
