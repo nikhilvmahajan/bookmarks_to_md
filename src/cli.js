@@ -20,7 +20,8 @@ import fs from 'fs';
 import path from 'path';
 import { fetchBookmarks } from './bird.js';
 import { fetchThread } from './thread.js';
-import { tweetToMarkdown, threadToMarkdown } from './markdown.js';
+import { detectArticle, fetchArticle } from './article.js';
+import { tweetToMarkdown, threadToMarkdown, articleToMarkdown } from './markdown.js';
 import { getProcessedIds, markProcessedBatch } from './state.js';
 
 function parseArgs(argv) {
@@ -76,12 +77,28 @@ if (newBookmarks.length === 0) {
 
 let filesWritten = 0;
 let threadsFound = 0;
+let articlesFound = 0;
 const allProcessedIds = [];
 
 for (const bookmark of newBookmarks) {
   const tweetId = bookmark.id?.toString();
   const author = bookmark.author?.username || bookmark.user?.screen_name || 'unknown';
   process.stdout.write(`  @${author}/${tweetId} ... `);
+
+  // Check for article
+  const articleInfo = detectArticle(bookmark);
+  if (articleInfo) {
+    const article = fetchArticle(bookmark, articleInfo.articleId);
+    if (article) {
+      const { filename, content } = articleToMarkdown(bookmark, article);
+      fs.writeFileSync(path.join(outDir, filename), content);
+      console.log(`article → ${filename}${article.title ? ` ("${article.title}")` : ''}`);
+      articlesFound++;
+      allProcessedIds.push(tweetId);
+      filesWritten++;
+      continue;
+    }
+  }
 
   // Check for thread
   let thread = null;
@@ -94,7 +111,6 @@ for (const bookmark of newBookmarks) {
     fs.writeFileSync(path.join(outDir, filename), content);
     console.log(`thread (${thread.length} tweets) → ${filename}`);
     threadsFound++;
-    // Mark all tweet IDs in thread as processed
     allProcessedIds.push(...thread.map(t => t.id));
   } else {
     const { filename, content } = tweetToMarkdown(bookmark);
@@ -107,4 +123,4 @@ for (const bookmark of newBookmarks) {
 
 markProcessedBatch(allProcessedIds);
 
-console.log(`\nDone. Wrote ${filesWritten} files (${threadsFound} threads). Output: ${path.resolve(outDir)}`);
+console.log(`\nDone. Wrote ${filesWritten} files (${articlesFound} articles, ${threadsFound} threads). Output: ${path.resolve(outDir)}`);

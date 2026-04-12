@@ -77,6 +77,46 @@ export function tweetToMarkdown(tweet) {
 }
 
 /**
+ * Generate markdown for an X article.
+ */
+export function articleToMarkdown(tweet, article) {
+  const author = tweet.author?.username || tweet.user?.screen_name || 'unknown';
+  const authorName = tweet.author?.name || tweet.user?.name || author;
+  const tweetId = tweet.id?.toString();
+  const url = `https://x.com/${author}/status/${tweetId}`;
+  const articleUrl = `https://x.com/i/article/${article.articleId}`;
+  const date = formatDate(tweet.createdAt);
+
+  const fm = frontmatter({
+    author: `@${author}`,
+    author_name: authorName,
+    tweet_id: tweetId,
+    article_id: article.articleId,
+    url,
+    article_url: articleUrl,
+    date,
+    type: 'article',
+    title: article.title
+  });
+
+  let body = '';
+  if (article.title) body += `## ${article.title}\n\n`;
+  if (article.previewText && article.previewText !== article.content) {
+    body += `*${article.previewText}*\n\n`;
+  }
+  if (article.content) {
+    body += article.content;
+  } else {
+    body += '*Article content could not be fetched.*';
+  }
+
+  const content = `${fm}\n\n# Article by @${author}\n\n${body}\n\n---\n*[Original tweet](${url}) | [Article](${articleUrl}) | ${date}*\n`;
+
+  const filename = `${sanitizeFilename(author)}-article-${article.articleId}.md`;
+  return { filename, content };
+}
+
+/**
  * Generate markdown for a thread.
  */
 export function threadToMarkdown(threadTweets) {
