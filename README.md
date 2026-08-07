@@ -1,11 +1,11 @@
 # bookmarks_to_md
 
-A simple CLI tool that fetches your Twitter/X bookmarks and saves them as clean Markdown files. Threads are automatically detected and saved as a single file.
+A simple CLI tool that fetches your Twitter/X bookmarks and saves them as clean Markdown files. Threads are automatically detected and saved as a single file. X articles are fetched with full content.
 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) (v18+)
-- [bird CLI](https://www.npmjs.com/package/@steipete/bird) — Twitter/X API client that uses your browser session cookies
+- [bird CLI](https://www.npmjs.com/package/@steipete/bird) -- Twitter/X API client that uses your browser session cookies
 
 Install bird:
 
@@ -21,7 +21,7 @@ Clone or download this repo, then:
 cd bookmarks_to_md
 ```
 
-No `npm install` needed — zero dependencies.
+No `npm install` needed -- zero dependencies.
 
 ## Authentication
 
@@ -31,54 +31,109 @@ You need your Twitter/X session cookies. To get them:
 2. Open DevTools (F12) -> Application -> Cookies -> `https://x.com`
 3. Copy the values for `auth_token` and `ct0`
 
-Pass them via CLI flags:
+Save them to config (one-time):
 
 ```bash
-node src/cli.js --auth-token YOUR_AUTH_TOKEN --ct0 YOUR_CT0
+node src/cli.js config --auth-token YOUR_AUTH_TOKEN --ct0 YOUR_CT0 --bird-path /path/to/bird
 ```
 
-Or via environment variables:
+Or pass them per-run via CLI flags or environment variables:
 
 ```bash
+node src/cli.js --auth-token TOKEN --ct0 CT0
 AUTH_TOKEN=xxx CT0=xxx node src/cli.js
 ```
 
 ## Usage
 
 ```bash
-# Fetch 20 most recent bookmarks (default)
-node src/cli.js --auth-token TOKEN --ct0 CT0
+# Fetch bookmarks (uses batch size from config, default 25)
+node src/cli.js
 
-# Fetch 100 bookmarks
-node src/cli.js --count 100 --auth-token TOKEN --ct0 CT0
+# Fetch a specific number
+node src/cli.js --count 100
 
 # Fetch all bookmarks
-node src/cli.js --count 9999 --auth-token TOKEN --ct0 CT0
+node src/cli.js --count 9999
 
 # Save to a custom directory
-node src/cli.js --output ./my-bookmarks --auth-token TOKEN --ct0 CT0
+node src/cli.js --output ./my-bookmarks
 
 # Skip thread detection (faster, but threads won't be merged)
-node src/cli.js --no-threads --auth-token TOKEN --ct0 CT0
+node src/cli.js --no-threads
 
-# Check how many bookmarks have been processed
-node src/cli.js --status
+# Check processing stats
+node src/cli.js status
 
-# Specify bird binary path (if not on PATH)
-node src/cli.js --bird-path /path/to/bird --auth-token TOKEN --ct0 CT0
+# View or update config
+node src/cli.js config
+node src/cli.js config --batch-size 50 --battery-threshold 30
 ```
 
-## Options
+## Configuration
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--count N` | `20` | Number of bookmarks to fetch. Use `9999` to fetch all. |
-| `--output DIR` | `./bookmarks` | Directory where Markdown files are saved. |
-| `--no-threads` | off | Skip thread detection and fetching. |
-| `--status` | off | Show processing stats and exit. |
-| `--auth-token TOKEN` | — | Twitter `auth_token` cookie value. |
-| `--ct0 TOKEN` | — | Twitter `ct0` cookie value. |
-| `--bird-path PATH` | `bird` | Full path to the bird binary. |
+Settings are stored in `.bookmarks-config.json`. View or update via:
+
+```bash
+node src/cli.js config                          # show current config
+node src/cli.js config --batch-size 50          # change batch size
+node src/cli.js config --battery-threshold 30   # change battery threshold
+node src/cli.js config --output ./my-bookmarks  # change output directory
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `batchSize` | `25` | Number of bookmarks to fetch per run. |
+| `batteryThreshold` | `50` | Minimum battery % to proceed (when on battery). |
+| `birdPath` | `null` | Full path to the bird binary. `null` uses PATH. |
+| `outputDir` | `./bookmarks` | Directory where Markdown files are saved. |
+| `authToken` | `null` | Twitter `auth_token` cookie value. |
+| `ct0` | `null` | Twitter `ct0` cookie value. |
+
+CLI flags (`--count`, `--output`, `--auth-token`, `--ct0`, `--bird-path`) override config values for that run.
+
+## Automatic Scheduling
+
+The tool can run automatically on a schedule using Windows Task Scheduler.
+
+### Install the scheduled task
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-task.ps1
+```
+
+This registers a task called "Twitter Bookmarks Sync" that:
+
+- Triggers at logon (2-minute delay), then repeats every 15 minutes
+- Checks battery: skips if on battery and below threshold (default 50%)
+- Fetches one batch of bookmarks per run (default 25)
+- Logs to `logs/sync.log`
+
+### Customize the interval
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-task.ps1 -IntervalMinutes 30
+```
+
+### Run it manually
+
+```powershell
+Start-ScheduledTask -TaskName 'Twitter Bookmarks Sync'
+```
+
+### Remove the scheduled task
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-task.ps1 -Uninstall
+```
+
+### Expired tokens
+
+When session cookies expire, the sync logs an error and exits. Update tokens:
+
+```bash
+node src/cli.js config --auth-token NEW_TOKEN --ct0 NEW_CT0
+```
 
 ## Output
 
@@ -86,8 +141,9 @@ Each bookmark becomes a Markdown file in the output directory:
 
 - **Standalone tweets** -> `username-tweetid.md`
 - **Threads** -> `username-thread-rootid.md` (all tweets in one file)
+- **Articles** -> `username-article-articleid.md` (full X article content)
 
-Every file includes YAML frontmatter with metadata (author, date, URL, type, tweet ID).
+Every file includes YAML frontmatter with metadata (author, date, URL, type).
 
 ### Example: standalone tweet
 
@@ -128,15 +184,30 @@ First tweet in the thread...
 
 ---
 
-### 2/5
-
-Second tweet...
-
----
-
 ### 3/5 *(bookmarked)*
 
 This is the tweet you actually bookmarked...
+```
+
+### Example: article
+
+```markdown
+---
+author: @writer
+tweet_id: 9876543210
+article_id: 1122334455
+url: https://x.com/writer/status/9876543210
+article_url: https://x.com/i/article/1122334455
+date: 2025-03-15 14:30:00 UTC
+type: article
+title: My Long-Form Post
+---
+
+# Article by @writer
+
+## My Long-Form Post
+
+Full article content here...
 ```
 
 ## Deduplication
@@ -145,13 +216,7 @@ Processed bookmark IDs are tracked in `./bookmarks/.state.json`. Running the too
 
 ## Thread Detection
 
-When a bookmarked tweet is part of a self-reply thread, the tool:
-
-1. **Walks backwards** from the bookmarked tweet to the thread root (following `inReplyToStatusId`)
-2. **Searches forwards** to find continuation tweets after the bookmarked tweet
-3. Combines everything into a single Markdown file in chronological order
-
-The bookmarked tweet is marked with *(bookmarked)* in the thread output. Thread traversal stops at 50 tweets in each direction or when the author changes (i.e., it only follows self-reply threads).
+Uses `bird thread <id>` to fetch the full conversation thread natively. The tool filters to self-reply tweets (same author) and outputs them chronologically. The bookmarked tweet is marked with *(bookmarked)* in the output.
 
 ## License
 

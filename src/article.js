@@ -7,6 +7,37 @@
  */
 
 import { readTweet, searchTweets } from './bird.js';
+import { request } from 'https';
+import { request as httpRequest } from 'http';
+
+const ARTICLE_RE = /x\.com\/i\/article\/(\d+)/;
+
+/**
+ * Resolve a t.co URL to its destination without downloading the body.
+ * Returns the final URL string, or null on failure.
+ */
+function expandTco(shortUrl) {
+  return new Promise(resolve => {
+    try {
+      const url = new URL(shortUrl);
+      const requester = url.protocol === 'https:' ? request : httpRequest;
+      const req = requester(url, { method: 'HEAD', timeout: 8000 }, res => {
+        const location = res.headers.location;
+        if (location) {
+          resolve(location);
+        } else {
+          resolve(shortUrl);
+        }
+        res.resume();
+      });
+      req.on('error', () => resolve(null));
+      req.on('timeout', () => { req.destroy(); resolve(null); });
+      req.end();
+    } catch {
+      resolve(null);
+    }
+  });
+}
 
 /**
  * Check if a bookmark contains or links to an X article.
@@ -27,14 +58,47 @@ export function detectArticle(bookmark) {
   const urls = bookmark.entities?.urls || [];
   for (const u of urls) {
     const expanded = u.expanded_url || u.url || '';
-    const match = expanded.match(/x\.com\/i\/article\/(\d+)/);
+    const match = expanded.match(ARTICLE_RE);
     if (match) return { articleId: match[1], source: 'url' };
   }
 
   // Check text for article URL as last resort
   const text = bookmark.text || bookmark.full_text || '';
-  const textMatch = text.match(/x\.com\/i\/article\/(\d+)/);
+  const textMatch = text.match(ARTICLE_RE);
   if (textMatch) return { articleId: textMatch[1], source: 'text' };
+
+  return null;
+}
+
+/**
+ * Async version that expands t.co links before checking.
+ * Call this when detectArticle() returns null but the tweet has t.co URLs.
+ */
+export async function detectArticleAsync(bookmark) {
+  const sync = detectArticle(bookmark);
+  if (sync) return sync;
+
+  // Collect t.co URLs from entities and text
+  const tcoUrls = new Set();
+  const urls = bookmark.entities?.urls || [];
+  for (const u of urls) {
+    const raw = u.url || '';
+    if (raw.includes('t.co/')) tcoUrls.add(raw);
+  }
+  const text = bookmark.text || bookmark.full_text || '';
+  const tcoMatches = text.match(/https?:\/\/t\.co\/\S+/g) || [];
+  for (const m of tcoMatches) tcoUrls.add(m);
+
+  if (tcoUrls.size === 0) return null;
+
+  // Expand each and check
+  for (const tco of tcoUrls) {
+    const expanded = await expandTco(tco);
+    if (expanded) {
+      const match = expanded.match(ARTICLE_RE);
+      if (match) return { articleId: match[1], source: 'tco-expanded' };
+    }
+  }
 
   return null;
 }
