@@ -75,3 +75,16 @@ export function searchTweets(query, count = 50) {
     return [];
   }
 }
+
+/**
+ * Fetch the full conversation thread containing a tweet.
+ */
+export function fetchThreadVia(tweetId) {
+  try {
+    const parsed = run(`thread ${tweetId} --all --json`, 60000);
+    return toArray(parsed);
+  } catch (e) {
+    console.error(`  Could not fetch thread for ${tweetId}: ${e.message}`);
+    return [];
+  }
+}

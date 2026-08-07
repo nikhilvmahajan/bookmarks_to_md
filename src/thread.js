@@ -1,24 +1,15 @@
 /**
  * Thread detection and fetching.
  *
- * Given a tweet, determines if it's part of a self-reply thread.
- * If so, fetches the full thread (backwards to root, forwards to end).
- * Returns null if the tweet is standalone.
+ * Uses `bird thread <id> --all --json` to fetch the full conversation thread.
+ * Filters to self-reply tweets (same author) and returns them chronologically.
+ * Returns null if the tweet is standalone (no other tweets by the same author).
  */
 
-import { readTweet, searchTweets } from './bird.js';
+import { fetchThreadVia } from './bird.js';
 
 function getAuthor(tweet) {
   return (tweet.author?.username || tweet.user?.screen_name || '').toLowerCase();
-}
-
-function getText(tweet) {
-  return tweet.text || tweet.full_text || '';
-}
-
-function getTweetUrl(tweet) {
-  const user = tweet.author?.username || tweet.user?.screen_name || 'unknown';
-  return `https://x.com/${user}/status/${tweet.id}`;
 }
 
 function toEntry(tweet, isBookmarked = false) {
@@ -26,8 +17,8 @@ function toEntry(tweet, isBookmarked = false) {
     id: tweet.id?.toString(),
     author: tweet.author?.username || tweet.user?.screen_name || 'unknown',
     authorName: tweet.author?.name || tweet.user?.name || 'unknown',
-    text: getText(tweet),
-    tweetUrl: getTweetUrl(tweet),
+    text: tweet.text || tweet.full_text || '',
+    tweetUrl: `https://x.com/${tweet.author?.username || tweet.user?.screen_name || 'unknown'}/status/${tweet.id}`,
     createdAt: tweet.createdAt,
     isBookmarked,
     inReplyToStatusId: tweet.inReplyToStatusId?.toString() || null,
@@ -40,72 +31,28 @@ function toEntry(tweet, isBookmarked = false) {
  * Fetch full thread for a tweet. Returns array of tweet entries (chronological)
  * or null if it's a standalone tweet.
  */
-export function fetchThread(bookmark, maxDepth = 50) {
+export function fetchThread(bookmark) {
   const authorUsername = getAuthor(bookmark);
   if (!authorUsername) return null;
 
   const bookmarkId = bookmark.id?.toString();
-  const visited = new Set([bookmarkId]);
+  const rawThread = fetchThreadVia(bookmarkId);
 
-  // --- Walk backwards to thread root ---
-  const before = [];
-  let current = bookmark;
-  let depth = 0;
+  if (!rawThread.length) return null;
 
-  while (current.inReplyToStatusId && depth < maxDepth) {
-    const parentId = current.inReplyToStatusId?.toString();
-    if (!parentId || visited.has(parentId)) break;
-    visited.add(parentId);
+  // Filter to only self-reply tweets (same author as bookmarked tweet)
+  const selfReplies = rawThread.filter(t => getAuthor(t) === authorUsername);
 
-    const parent = readTweet(parentId);
-    if (!parent) break;
+  if (selfReplies.length <= 1) return null;
 
-    if (getAuthor(parent) !== authorUsername) break;
+  // Sort chronologically by snowflake ID
+  selfReplies.sort((a, b) => {
+    try { return BigInt(a.id) < BigInt(b.id) ? -1 : 1; }
+    catch { return String(a.id) < String(b.id) ? -1 : 1; }
+  });
 
-    before.unshift(toEntry(parent));
-    current = parent;
-    depth++;
-  }
-
-  // --- Bookmarked tweet ---
-  const bookmarkedEntry = toEntry(bookmark, true);
-
-  // --- Walk forwards via search ---
-  const after = [];
-  try {
-    const username = bookmark.author?.username || bookmark.user?.screen_name;
-    const candidates = searchTweets(`from:${username} to:${username}`, 50);
-
-    const threadIds = new Set([...before.map(t => t.id), bookmarkId]);
-    let changed = true;
-    const pool = [...candidates];
-
-    while (changed && after.length < maxDepth) {
-      changed = false;
-      for (let i = pool.length - 1; i >= 0; i--) {
-        const c = pool[i];
-        const cId = c.id?.toString();
-        const replyToId = c.inReplyToStatusId?.toString();
-        if (!cId || visited.has(cId) || !replyToId || !threadIds.has(replyToId)) continue;
-        if (getAuthor(c) !== authorUsername) continue;
-
-        visited.add(cId);
-        threadIds.add(cId);
-        after.push(toEntry(c));
-        pool.splice(i, 1);
-        changed = true;
-      }
-    }
-
-    after.sort((a, b) => {
-      try { return BigInt(a.id) < BigInt(b.id) ? -1 : 1; }
-      catch { return String(a.id) < String(b.id) ? -1 : 1; }
-    });
-  } catch (e) {
-    console.error(`  Thread forward search failed: ${e.message}`);
-  }
-
-  const allTweets = [...before, bookmarkedEntry, ...after];
-  if (allTweets.length <= 1) return null;
-  return allTweets;
+  // Mark the bookmarked tweet
+  return selfReplies.map(t =>
+    toEntry(t, t.id?.toString() === bookmarkId)
+  );
 }
