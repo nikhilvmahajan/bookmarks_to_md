@@ -214,9 +214,15 @@ Full article content here...
 
 Processed bookmark IDs are tracked in `./bookmarks/.state.json`. Running the tool again will skip already-processed bookmarks, so you can safely re-run it without creating duplicates.
 
+**Note on ID count vs file count:** When a thread is processed, *all* tweet IDs in the thread are marked as processed (not just the bookmarked tweet). A 15-tweet thread produces 1 `.md` file but adds 15 IDs to the state file. This means the processed ID count in `.state.json` will be higher than the number of `.md` files. This is intentional -- it prevents duplicate thread files when multiple tweets from the same thread are bookmarked separately.
+
 ## Thread Detection
 
 Uses `bird thread <id>` to fetch the full conversation thread natively. The tool filters to self-reply tweets (same author) and outputs them chronologically. The bookmarked tweet is marked with *(bookmarked)* in the output.
+
+## Rate Limiting
+
+Twitter's API has rate limits. When a 429 (rate limit) response is received, the tool saves progress on everything processed so far and stops gracefully. The next scheduled run (or manual run) will pick up remaining bookmarks automatically. The `bird thread` command is the most rate-limit-prone operation since it makes additional API calls per bookmark.
 
 ## License
 
