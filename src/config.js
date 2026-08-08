@@ -11,7 +11,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.join(__dirname, '..', '.bookmarks-config.json');
 
 const DEFAULTS = {
-  batchSize: 25,
+  batchSize: 5,
+  listingPages: 10,
   batteryThreshold: 50,
   outputDir: './bookmarks',
   birdPath: null,

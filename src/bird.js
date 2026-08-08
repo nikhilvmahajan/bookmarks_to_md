@@ -23,6 +23,10 @@ function isRateLimit(e) {
   return e.message && (e.message.includes('429') || e.message.includes('Rate limit'));
 }
 
+function isAuthFailure(e) {
+  return e.message && (e.message.includes('401') || e.message.includes('Could not authenticate'));
+}
+
 function run(cmd, timeoutMs = 30000) {
   try {
     return JSON.parse(
@@ -30,42 +34,43 @@ function run(cmd, timeoutMs = 30000) {
     );
   } catch (e) {
     if (isRateLimit(e)) throw new RateLimitError(e.message);
+    if (isAuthFailure(e)) {
+      console.error('Twitter session expired. Update tokens: node src/cli.js config --auth-token <v> --ct0 <v>');
+      process.exit(2);
+    }
     throw e;
   }
 }
 
 /**
- * bird returns either an array or { tweets: [...] } — normalise to array.
+ * bird returns either an array or { tweets: [...] } -- normalise to array.
  */
 function toArray(parsed) {
   return Array.isArray(parsed) ? parsed : (parsed.tweets || []);
 }
 
 /**
- * Fetch bookmarks. Uses a temp file to work around bird's pipe buffering bug.
+ * Fetch a chunk of bookmarks using paginated mode.
+ * Returns { tweets: [...], nextCursor: string|null }.
  */
-export function fetchBookmarks(count = 20) {
-  const useAll = count > 50;
-  let cmd;
-  if (useAll) {
-    const maxPages = Math.max(Math.ceil(count / 20), 10);
-    cmd = `bookmarks --all --max-pages ${maxPages} --json`;
-  } else {
-    cmd = `bookmarks -n ${count} --json`;
-  }
+export function fetchBookmarksPage(maxPages = 10, cursor = null) {
+  let cmd = `bookmarks --all --max-pages ${maxPages} --json`;
+  if (cursor) cmd += ` --cursor "${cursor}"`;
 
   const tmpFile = path.join(os.tmpdir(), `btm-bookmarks-${Date.now()}.json`);
   try {
     execSync(`${getBird()} ${cmd} > "${tmpFile}"`, {
-      timeout: useAll ? 180000 : 60000,
+      timeout: maxPages * 20000,
       shell: true
     });
-    const parsed = JSON.parse(fs.readFileSync(tmpFile, 'utf8'));
-    let tweets = toArray(parsed);
-    if (tweets.length > count) tweets = tweets.slice(0, count);
-    return tweets;
+    const raw = fs.readFileSync(tmpFile, 'utf8');
+    const parsed = JSON.parse(raw);
+    const tweets = toArray(parsed);
+    const nextCursor = parsed.nextCursor || null;
+    return { tweets, nextCursor };
   } catch (e) {
-    if (e.message && (e.message.includes('401') || e.message.includes('Could not authenticate'))) {
+    if (isRateLimit(e)) throw new RateLimitError(e.message);
+    if (isAuthFailure(e)) {
       console.error('Twitter session expired. Update tokens: node src/cli.js config --auth-token <v> --ct0 <v>');
       process.exit(2);
     }

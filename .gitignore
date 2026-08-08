@@ -2,6 +2,7 @@ node_modules/
 bookmarks/
 logs/
 .bookmarks-config.json
+.bookmarks-state.json
 *.log
 .DS_Store
 Thumbs.db
