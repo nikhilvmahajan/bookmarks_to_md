@@ -37,37 +37,55 @@ Save them to config (one-time):
 node src/cli.js config --auth-token YOUR_AUTH_TOKEN --ct0 YOUR_CT0 --bird-path /path/to/bird
 ```
 
-Or pass them per-run via CLI flags or environment variables:
+## How It Works
 
-```bash
-node src/cli.js --auth-token TOKEN --ct0 CT0
-AUTH_TOKEN=xxx CT0=xxx node src/cli.js
-```
+The tool uses a two-phase approach to handle large bookmark collections without hitting rate limits:
+
+### Phase 1: Listing
+
+Crawls your bookmarks from Twitter into a local pending queue. Twitter's API returns ~20 bookmarks per page, so the tool fetches multiple pages per run (default 10 pages = ~200 bookmarks), saves a cursor, and continues from where it left off on the next run.
+
+For example, with 2000 bookmarks:
+
+| Run | What happens | Pending queue |
+|-----|-------------|---------------|
+| 1 | Fetches pages 1-10 (~200 bookmarks) | 200 |
+| 2 | Fetches pages 11-20 (resumes from cursor) | ~400 |
+| ... | ... | ... |
+| 10 | Fetches pages 91-100, no more cursor = listing complete | ~2000 |
+
+### Phase 2: Processing
+
+Each run pops `batchSize` items (default 10) from the pending queue and processes them:
+- Detects if the tweet is an **X article** (expands t.co shortlinks if needed)
+- Detects if the tweet is part of a **thread** (via `bird thread`)
+- Writes a `.md` file (standalone tweet, thread, or article)
+- Saves state after each item, so rate limits or crashes lose no progress
+
+Both phases run in the same invocation -- listing adds to the queue, processing drains it.
+
+### Steady State
+
+Once the initial listing is complete and the queue is empty, each run fetches the most recent page (~20 bookmarks) and checks for new ones. New bookmarks you add on Twitter are automatically picked up.
 
 ## Usage
 
 ```bash
-# Fetch bookmarks (uses batch size from config, default 25)
+# Run (listing + processing happens automatically)
 node src/cli.js
 
-# Fetch a specific number
-node src/cli.js --count 100
-
-# Fetch all bookmarks
-node src/cli.js --count 9999
-
-# Save to a custom directory
-node src/cli.js --output ./my-bookmarks
-
-# Skip thread detection (faster, but threads won't be merged)
+# Skip thread detection (faster, no extra API calls per tweet)
 node src/cli.js --no-threads
 
-# Check processing stats
+# Check progress
 node src/cli.js status
+
+# Reset state (re-crawl everything from scratch)
+node src/cli.js reset
 
 # View or update config
 node src/cli.js config
-node src/cli.js config --batch-size 50 --battery-threshold 30
+node src/cli.js config --batch-size 20 --listing-pages 15
 ```
 
 ## Configuration
@@ -75,22 +93,22 @@ node src/cli.js config --batch-size 50 --battery-threshold 30
 Settings are stored in `.bookmarks-config.json`. View or update via:
 
 ```bash
-node src/cli.js config                          # show current config
-node src/cli.js config --batch-size 50          # change batch size
-node src/cli.js config --battery-threshold 30   # change battery threshold
-node src/cli.js config --output ./my-bookmarks  # change output directory
+node src/cli.js config                            # show current config
+node src/cli.js config --batch-size 10            # tweets to process per run
+node src/cli.js config --listing-pages 10         # pages to crawl per run
+node src/cli.js config --battery-threshold 15     # min battery % to proceed
+node src/cli.js config --output ./my-bookmarks    # output directory
 ```
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `batchSize` | `25` | Number of bookmarks to fetch per run. |
+| `batchSize` | `5` | Number of bookmarks to process per run. |
+| `listingPages` | `10` | Pages to crawl per listing run (~20 bookmarks/page). |
 | `batteryThreshold` | `50` | Minimum battery % to proceed (when on battery). |
 | `birdPath` | `null` | Full path to the bird binary. `null` uses PATH. |
 | `outputDir` | `./bookmarks` | Directory where Markdown files are saved. |
 | `authToken` | `null` | Twitter `auth_token` cookie value. |
 | `ct0` | `null` | Twitter `ct0` cookie value. |
-
-CLI flags (`--count`, `--output`, `--auth-token`, `--ct0`, `--bird-path`) override config values for that run.
 
 ## Automatic Scheduling
 
@@ -104,15 +122,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-task.ps1
 
 This registers a task called "Twitter Bookmarks Sync" that:
 
-- Triggers at logon (2-minute delay), then repeats every 15 minutes
-- Checks battery: skips if on battery and below threshold (default 50%)
-- Fetches one batch of bookmarks per run (default 25)
+- Triggers at logon (2-minute delay), then repeats on an interval (default 90 minutes)
+- Checks battery: skips if on battery and below threshold
+- Runs one listing + processing cycle per invocation
 - Logs to `logs/sync.log`
 
 ### Customize the interval
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install-task.ps1 -IntervalMinutes 30
+powershell -ExecutionPolicy Bypass -File .\scripts\install-task.ps1 -IntervalMinutes 60
 ```
 
 ### Run it manually
@@ -212,17 +230,13 @@ Full article content here...
 
 ## Deduplication
 
-Processed bookmark IDs are tracked in `./bookmarks/.state.json`. Running the tool again will skip already-processed bookmarks, so you can safely re-run it without creating duplicates.
+Processed bookmark IDs are tracked in `.bookmarks-state.json`. Running the tool again will skip already-processed bookmarks, so you can safely re-run it without creating duplicates.
 
-**Note on ID count vs file count:** When a thread is processed, *all* tweet IDs in the thread are marked as processed (not just the bookmarked tweet). A 15-tweet thread produces 1 `.md` file but adds 15 IDs to the state file. This means the processed ID count in `.state.json` will be higher than the number of `.md` files. This is intentional -- it prevents duplicate thread files when multiple tweets from the same thread are bookmarked separately.
-
-## Thread Detection
-
-Uses `bird thread <id>` to fetch the full conversation thread natively. The tool filters to self-reply tweets (same author) and outputs them chronologically. The bookmarked tweet is marked with *(bookmarked)* in the output.
+**Note on ID count vs file count:** When a thread is processed, *all* tweet IDs in the thread are marked as processed (not just the bookmarked tweet). A 15-tweet thread produces 1 `.md` file but adds 15 IDs to the state file. This means the processed ID count will be higher than the number of `.md` files. This is intentional -- it prevents duplicate thread files when multiple tweets from the same thread are bookmarked separately.
 
 ## Rate Limiting
 
-Twitter's API has rate limits. When a 429 (rate limit) response is received, the tool saves progress on everything processed so far and stops gracefully. The next scheduled run (or manual run) will pick up remaining bookmarks automatically. The `bird thread` command is the most rate-limit-prone operation since it makes additional API calls per bookmark.
+Twitter's API has rate limits. When a 429 (rate limit) response is received, the tool saves progress on everything processed so far and stops gracefully. The next scheduled run (or manual run) picks up remaining bookmarks from the pending queue automatically. The `bird thread` command is the most rate-limit-prone operation since it makes additional API calls per bookmark.
 
 ## License
 
