@@ -12,13 +12,13 @@
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\scripts\install-task.ps1
-  powershell -ExecutionPolicy Bypass -File .\scripts\install-task.ps1 -IntervalMinutes 30
+  powershell -ExecutionPolicy Bypass -File .\scripts\install-task.ps1 -IntervalMinutes 90
   powershell -ExecutionPolicy Bypass -File .\scripts\install-task.ps1 -Uninstall
 #>
 param(
   [string]$TaskName = 'Twitter Bookmarks Sync',
-  [int]$IntervalMinutes = 15,
-  [int]$StartDelayMinutes = 2,
+  [int]$IntervalMinutes = 60,
+  [int]$StartDelayMinutes = 10,
   [switch]$Uninstall
 )
 

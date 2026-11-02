@@ -122,16 +122,29 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-task.ps1
 
 This registers a task called "Twitter Bookmarks Sync" that:
 
-- Triggers at logon (2-minute delay), then repeats on an interval (default 90 minutes)
+- Triggers at logon (10-minute delay), then repeats every 60 minutes
 - Checks battery: skips if on battery and below threshold
 - Runs one listing + processing cycle per invocation
 - Logs to `logs/sync.log`
 
-### Customize the interval
+The logon delay exists so you have time to log in and refresh your session cookies before the first run fires.
+
+### Customize the schedule
+
+`-IntervalMinutes` sets how often the task repeats; `-StartDelayMinutes` sets the one-time delay after logon before the first run.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install-task.ps1 -IntervalMinutes 60
+powershell -ExecutionPolicy Bypass -File .\scripts\install-task.ps1 -IntervalMinutes 90 -StartDelayMinutes 5
 ```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `-IntervalMinutes` | `60` | Minutes between repeated runs. |
+| `-StartDelayMinutes` | `10` | Delay after logon before the first run. |
+| `-TaskName` | `Twitter Bookmarks Sync` | Name of the scheduled task. |
+| `-Uninstall` | -- | Removes the task instead of registering it. |
+
+**Note:** re-registering only changes the repetition schedule from the *next logon* onward -- Windows does not re-arm a logon trigger's repetition mid-session. After changing the interval, either reboot or kick a run manually.
 
 ### Run it manually
 
