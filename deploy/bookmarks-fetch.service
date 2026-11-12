@@ -1,0 +1,14 @@
+[Unit]
+Description=Twitter bookmarks sync (one batch, then exit)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/code/bookmarks_to_md
+ExecStart=/usr/bin/node src/cli.js
+# Exit 2 = Twitter login missing or expired: after-fetch.sh disables the timer
+# and notifies once. Any other failure: it notifies only. Rate limits exit 0
+# (progress saved).
+ExecStopPost=%h/code/bookmarks_to_md/scripts/after-fetch.sh %N.timer
+TimeoutStartSec=2h
+Nice=10
+PrivateTmp=yes

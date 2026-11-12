@@ -1,0 +1,9 @@
+[Unit]
+Description=Twitter bookmarks sync: 10 minutes after login, then every 60 minutes
+
+[Timer]
+OnStartupSec=10min
+OnUnitActiveSec=60min
+
+[Install]
+WantedBy=timers.target

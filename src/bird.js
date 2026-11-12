@@ -23,8 +23,14 @@ function isRateLimit(e) {
   return e.message && (e.message.includes('429') || e.message.includes('Rate limit'));
 }
 
+// Exit 2 on these turns the scheduled sync off (deploy/ + scripts/after-fetch.sh),
+// so look only at bird's own error output: e.message also holds the command
+// line, and its tweet IDs and temp-file timestamps can contain "401".
+// "Missing required credentials": bird found no tokens in config, env or browsers.
 function isAuthFailure(e) {
-  return e.message && (e.message.includes('401') || e.message.includes('Could not authenticate'));
+  const err = String(e.stderr ?? '');
+  return err.includes('HTTP 401') || err.includes('Could not authenticate') ||
+    err.includes('Missing required credentials');
 }
 
 function run(cmd, timeoutMs = 30000) {
@@ -35,7 +41,7 @@ function run(cmd, timeoutMs = 30000) {
   } catch (e) {
     if (isRateLimit(e)) throw new RateLimitError(e.message);
     if (isAuthFailure(e)) {
-      console.error('Twitter session expired. Update tokens: node src/cli.js config --auth-token <v> --ct0 <v>');
+      console.error('Twitter login missing or expired. Update tokens: node src/cli.js config --auth-token <v> --ct0 <v>');
       process.exit(2);
     }
     throw e;
@@ -71,7 +77,7 @@ export function fetchBookmarksPage(maxPages = 10, cursor = null) {
   } catch (e) {
     if (isRateLimit(e)) throw new RateLimitError(e.message);
     if (isAuthFailure(e)) {
-      console.error('Twitter session expired. Update tokens: node src/cli.js config --auth-token <v> --ct0 <v>');
+      console.error('Twitter login missing or expired. Update tokens: node src/cli.js config --auth-token <v> --ct0 <v>');
       process.exit(2);
     }
     throw e;
