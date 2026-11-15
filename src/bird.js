@@ -15,6 +15,15 @@ export class RateLimitError extends Error {
   }
 }
 
+// bird could not reach X at all (machine offline, DNS down). Every later call
+// in the same run fails too, so the run stops and keeps its queue as it is.
+export class NetworkError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'NetworkError';
+  }
+}
+
 function getBird() {
   return process.env.BIRD_PATH || 'bird';
 }
@@ -33,6 +42,15 @@ function isAuthFailure(e) {
     err.includes('Missing required credentials');
 }
 
+// Node's fetch() (which bird uses) reports every network-level failure as
+// "fetch failed". The error codes cover a lower-level message. Look only at
+// bird's error output, for the same reason as isAuthFailure.
+function isNetworkError(e) {
+  const err = String(e.stderr ?? '');
+  return err.includes('fetch failed') ||
+    /\b(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ENETUNREACH|EHOSTUNREACH)\b/.test(err);
+}
+
 function run(cmd, timeoutMs = 30000) {
   try {
     return JSON.parse(
@@ -44,6 +62,7 @@ function run(cmd, timeoutMs = 30000) {
       console.error('Twitter login missing or expired. Update tokens: node src/cli.js config --auth-token <v> --ct0 <v>');
       process.exit(2);
     }
+    if (isNetworkError(e)) throw new NetworkError(String(e.stderr).trim());
     throw e;
   }
 }
@@ -93,7 +112,7 @@ export function readTweet(tweetId) {
   try {
     return run(`read ${tweetId} --json`, 15000);
   } catch (e) {
-    if (e instanceof RateLimitError) throw e;
+    if (e instanceof RateLimitError || e instanceof NetworkError) throw e;
     console.error(`  Could not fetch tweet ${tweetId}: ${e.message}`);
     return null;
   }
@@ -107,7 +126,7 @@ export function searchTweets(query, count = 50) {
     const parsed = run(`search "${query}" -n ${count} --json`, 30000);
     return toArray(parsed);
   } catch (e) {
-    if (e instanceof RateLimitError) throw e;
+    if (e instanceof RateLimitError || e instanceof NetworkError) throw e;
     console.error(`  Search failed ("${query}"): ${e.message}`);
     return [];
   }
@@ -115,14 +134,9 @@ export function searchTweets(query, count = 50) {
 
 /**
  * Fetch the full conversation thread containing a tweet.
+ * Throws on any failure. An empty list must mean "bird answered, no thread",
+ * never "bird failed": the caller saves a single tweet for an empty list.
  */
 export function fetchThreadVia(tweetId) {
-  try {
-    const parsed = run(`thread ${tweetId} --all --json`, 60000);
-    return toArray(parsed);
-  } catch (e) {
-    if (e instanceof RateLimitError) throw e;
-    console.error(`  Could not fetch thread for ${tweetId}: ${e.message}`);
-    return [];
-  }
+  return toArray(run(`thread ${tweetId} --all --json`, 60000));
 }

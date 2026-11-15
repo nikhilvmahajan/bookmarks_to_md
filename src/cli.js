@@ -18,7 +18,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { fetchBookmarksPage, RateLimitError } from './bird.js';
+import { fetchBookmarksPage, RateLimitError, NetworkError } from './bird.js';
 import { fetchThread } from './thread.js';
 import { detectArticle, detectArticleAsync, fetchArticle } from './article.js';
 import { tweetToMarkdown, threadToMarkdown, articleToMarkdown } from './markdown.js';
@@ -49,6 +49,16 @@ function parseArgs(argv) {
     else if (argv[i] === '--listing-pages' && argv[i + 1]) { args.listingPages = parseInt(argv[++i], 10); }
   }
   return args;
+}
+
+// A thread fetch that fails (timeout, bird error) is tried again in later runs.
+// After this many failed runs the bookmark is saved as a single tweet.
+const MAX_THREAD_TRIES = 3;
+
+function describeFailure(e) {
+  if (e.code === 'ETIMEDOUT') return 'timed out';
+  if (e.status != null) return `bird exit ${e.status}`;
+  return `${e.name}: ${e.message}`;
 }
 
 function ensureDir(dir) {
@@ -188,6 +198,7 @@ async function main() {
   let filesWritten = 0;
   let threadsFound = 0;
   let articlesFound = 0;
+  let keptForRetry = 0;
 
   for (const bookmark of batch) {
     const tweetId = bookmark.id?.toString();
@@ -218,7 +229,23 @@ async function main() {
       // Check for thread
       let thread = null;
       if (args.threads) {
-        thread = fetchThread(bookmark);
+        try {
+          thread = fetchThread(bookmark);
+        } catch (e) {
+          if (e instanceof RateLimitError || e instanceof NetworkError) throw e;
+          const tries = (bookmark.threadFetchFailures ?? 0) + 1;
+          if (tries < MAX_THREAD_TRIES) {
+            bookmark.threadFetchFailures = tries;
+            // To the back of the queue, so a tweet that keeps failing cannot block it.
+            state.pending = state.pending.filter(b => b !== bookmark);
+            state.pending.push(bookmark);
+            saveState(state);
+            keptForRetry++;
+            console.log(`thread fetch failed (${describeFailure(e)}), try ${tries} of ${MAX_THREAD_TRIES}. Kept for a later run.`);
+            continue;
+          }
+          console.log(`thread fetch failed (${describeFailure(e)}) ${tries} times. Saving as a single tweet.`);
+        }
       }
 
       if (thread) {
@@ -243,6 +270,12 @@ async function main() {
         saveState(state);
         process.exit(0);
       }
+      if (e instanceof NetworkError) {
+        console.log(`\nNetwork error, run stopped: ${e.message}`);
+        console.log(`This bookmark and the rest stay in the queue (${state.pending.length} pending). Will retry next run.`);
+        saveState(state);
+        process.exit(0);
+      }
       console.error(`error: ${e.message}`);
       markProcessed(state, [tweetId]);
       saveState(state);
@@ -250,7 +283,7 @@ async function main() {
     }
   }
 
-  console.log(`\nDone. Wrote ${filesWritten} files (${articlesFound} articles, ${threadsFound} threads).`);
+  console.log(`\nDone. Wrote ${filesWritten} files (${articlesFound} articles, ${threadsFound} threads). Kept ${keptForRetry} for retry.`);
   console.log(`Remaining pending: ${state.pending.length}. Output: ${path.resolve(outDir)}`);
 }
 
