@@ -132,11 +132,22 @@ export function searchTweets(query, count = 50) {
   }
 }
 
+// Not --all: that pages through every reply by anyone, 1 s apart, and big
+// conversations ran past the 60 s timeout (183 lost threads, 11-15 Nov).
+// The author's own tweets come first. On 15 Nov, 10 pages matched --all for
+// threads of 72, 106 and 113 tweets, in 20 s or less.
+const THREAD_MAX_PAGES = 10;
+
 /**
- * Fetch the full conversation thread containing a tweet.
+ * Fetch the conversation thread containing a tweet.
  * Throws on any failure. An empty list must mean "bird answered, no thread",
  * never "bird failed": the caller saves a single tweet for an empty list.
  */
 export function fetchThreadVia(tweetId) {
-  return toArray(run(`thread ${tweetId} --all --json`, 60000));
+  const parsed = run(`thread ${tweetId} --max-pages ${THREAD_MAX_PAGES} --json`, 60000);
+  const tweets = toArray(parsed);
+  // nextCursor set: the conversation has pages that were not fetched. They can
+  // hold more of the thread, or only other people's replies.
+  tweets.morePages = Boolean(parsed?.nextCursor);
+  return tweets;
 }

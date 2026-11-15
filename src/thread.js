@@ -1,7 +1,7 @@
 /**
  * Thread detection and fetching.
  *
- * Uses `bird thread <id> --all --json` to fetch the full conversation thread.
+ * Uses `bird thread <id> --max-pages 10 --json` (see fetchThreadVia in bird.js).
  * Filters to self-reply tweets (same author) and returns them chronologically.
  * Returns null if the tweet is standalone (no other tweets by the same author).
  */
@@ -52,7 +52,9 @@ export function fetchThread(bookmark) {
   });
 
   // Mark the bookmarked tweet
-  return selfReplies.map(t =>
+  const entries = selfReplies.map(t =>
     toEntry(t, t.id?.toString() === bookmarkId)
   );
+  entries.morePages = rawThread.morePages;
+  return entries;
 }

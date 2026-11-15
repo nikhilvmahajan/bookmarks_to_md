@@ -251,7 +251,7 @@ async function main() {
       if (thread) {
         const { filename, content } = threadToMarkdown(thread);
         fs.writeFileSync(path.join(outDir, filename), content);
-        console.log(`thread (${thread.length} tweets) -> ${filename}`);
+        console.log(`thread (${thread.length} tweets${thread.morePages ? ', more pages not fetched' : ''}) -> ${filename}`);
         threadsFound++;
         markProcessed(state, thread.map(t => t.id));
       } else {
